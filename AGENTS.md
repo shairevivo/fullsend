@@ -17,6 +17,7 @@ Fullsend is a platform for fully autonomous agentic development for Git-hosted o
 - Never commit secrets (tokens, API keys, PEM keys, gcloud credentials) or sensitive data (GCP project names, service account identifiers, Model Armor template names, internal hostnames). Use environment variables with no defaults for sensitive values.
 - When adding a new doc under `docs/`, check `docs/.vitepress/config.ts` sidebar config. Sections using `getMarkdownFiles()` are auto-discovered. All other sections need a manual `{ text, link }` entry. Also add the new folder's prefix to `search.options.scopes` in the same file so the folder's pages are reachable when search scope pills are active.
 - When removing or renaming a CLI command, public API, or user-facing feature, grep all documentation files under `docs/` for references to the old name and update or remove them. Pay special attention to `docs/cli/`, `docs/guides/`, and any getting-started or operations guides that walk through the removed workflow.
+- Per-org installation mode is deprecated ([ADR 0044](docs/ADRs/0044-deprecate-per-org-installation-mode.md)) and will be removed in v2.0. Do not add org-mode-specific content to docs or code. When reviewing PRs that reference org mode, flag it as deprecated rather than engaging with org-mode details as active architecture. Per-repo is the sole supported installation model going forward.
 
 ## Topic-specific guidance
 
