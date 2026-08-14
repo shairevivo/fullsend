@@ -76,6 +76,9 @@ func (p *panickingSCM) CommitFileToFork(context.Context, string, string, string,
 func (p *panickingSCM) CreateForkChangeProposal(context.Context, string, string, string, string, string, string, string, string) (*forge.ChangeProposal, error) {
 	return nil, nil
 }
+func (p *panickingSCM) ListIssueReactions(context.Context, string, string, int) ([]forge.Reaction, error) {
+	return nil, nil
+}
 
 func TestTagNames(t *testing.T) {
 	names := tagNames([]*messages.PickleTag{{Name: "@foo"}, {Name: "@bar"}})
