@@ -4491,6 +4491,127 @@ func TestFetchBaseFile_FetchURLError(t *testing.T) {
 	assert.Contains(t, err.Error(), "fetching")
 }
 
+func TestFetchBaseFile_PreservesExtension(t *testing.T) {
+	tests := []struct {
+		name       string
+		relPath    string
+		wantSuffix string
+	}{
+		{"yaml extension", "profiles/vertex-ai.yaml", "content.yaml"},
+		{"yml extension", "profiles/vertex-ai.yml", "content.yml"},
+		{"no extension", "scripts/setup", "content"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name+" cache hit", func(t *testing.T) {
+			dir := t.TempDir()
+			cacheDir := filepath.Join(dir, "cache")
+
+			content := []byte("# test content")
+			fileURL := "https://example.com/" + tc.relPath
+			require.NoError(t, fetch.CachePut(cacheDir, fileURL, content))
+			hash := fetch.ComputeSHA256(content)
+			require.NoError(t, urlIndexPut(cacheDir, fileURL, hash))
+
+			_, cachePath, err := fetchBaseFile(context.Background(), "test", "https://example.com/",
+				tc.relPath, []string{"https://example.com/"}, ComposeOpts{
+					WorkspaceRoot: cacheDir,
+				}, "resource", false)
+			require.NoError(t, err)
+			assert.True(t, strings.HasSuffix(cachePath, tc.wantSuffix),
+				"cache path %q should end with %q", cachePath, tc.wantSuffix)
+
+			got, err := os.ReadFile(cachePath)
+			require.NoError(t, err)
+			assert.Equal(t, content, got, "content should be readable via returned path")
+		})
+
+		t.Run(tc.name+" fresh fetch", func(t *testing.T) {
+			content := []byte("# fresh content")
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write(content)
+			}))
+			t.Cleanup(server.Close)
+
+			policy := fetch.NewTestPolicy(
+				server.Client().Transport.(*http.Transport).TLSClientConfig,
+				[]string{"127.0.0.1"},
+				[]string{server.Listener.Addr().String()[len("127.0.0.1:"):]},
+			)
+
+			dir := t.TempDir()
+			cacheDir := filepath.Join(dir, "cache")
+
+			_, cachePath, err := fetchBaseFile(context.Background(), "test", server.URL+"/",
+				tc.relPath, []string{server.URL + "/"}, ComposeOpts{
+					WorkspaceRoot: cacheDir,
+					FetchPolicy:   policy,
+				}, "resource", false)
+			require.NoError(t, err)
+			assert.True(t, strings.HasSuffix(cachePath, tc.wantSuffix),
+				"cache path %q should end with %q", cachePath, tc.wantSuffix)
+
+			got, err := os.ReadFile(cachePath)
+			require.NoError(t, err)
+			assert.Equal(t, content, got, "content should be readable via returned path")
+		})
+	}
+}
+
+// TestLoadWithBase_URLBase_ProfilesPassValidateWithRelativeWorkspace verifies
+// that cached profile paths pass Validate() even when WorkspaceRoot is
+// relative — the scenario from #6348 where "content" (no extension) caused
+// Validate to reject openshell.profiles entries.
+func TestLoadWithBase_URLBase_ProfilesPassValidateWithRelativeWorkspace(t *testing.T) {
+	profileContent := []byte("id: claude-code\nnetwork:\n  egress:\n    - host: api.example.com\n")
+
+	baseContent := []byte(`
+agent: agents/triage.md
+role: test
+openshell:
+  profiles:
+  - profiles/claude-code.yaml
+`)
+
+	server, policy := setupScriptTestServer(t, baseContent, map[string][]byte{
+		"/profiles/claude-code.yaml": profileContent,
+	})
+
+	hash := computeHash(baseContent)
+
+	// Use a relative workspace root to reproduce the scenario where
+	// cache paths are relative and Validate() checks the extension.
+	origDir, err := os.Getwd()
+	require.NoError(t, err)
+	tmpDir := t.TempDir()
+	require.NoError(t, os.Chdir(tmpDir))
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	relCache := "rel-cache"
+	require.NoError(t, os.MkdirAll(relCache, 0o755))
+
+	baseURL := server.URL + "/harness/triage.yaml#sha256=" + hash
+	childYAML := fmt.Sprintf("role: test\nbase: %s\n", baseURL)
+	childPath := filepath.Join(tmpDir, "child.yaml")
+	require.NoError(t, os.WriteFile(childPath, []byte(childYAML), 0o644))
+
+	h, _, err := LoadWithBase(context.Background(), childPath, ComposeOpts{
+		WorkspaceRoot: relCache,
+		FetchPolicy:   policy,
+		OrgAllowlist:  []string{server.URL + "/"},
+	})
+	require.NoError(t, err, "LoadWithBase should not fail — cached profile path should pass Validate()")
+
+	require.Len(t, h.OpenShellProfiles(), 1)
+	profilePath := h.OpenShellProfiles()[0]
+	assert.True(t, strings.HasSuffix(profilePath, ".yaml"),
+		"profile cache path %q should preserve .yaml extension", profilePath)
+
+	got, readErr := os.ReadFile(profilePath)
+	require.NoError(t, readErr)
+	assert.Equal(t, profileContent, got)
+}
+
 func TestFetchBaseSkill_CacheHit_AuditError(t *testing.T) {
 	dir := t.TempDir()
 	cacheDir := filepath.Join(dir, "cache")
