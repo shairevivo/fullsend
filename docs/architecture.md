@@ -108,7 +108,9 @@ repo baseline and overrides)
   `forge:` section separates platform-specific config from platform-neutral
   fields (see ADR-0045 for the full list of forge-overridable fields). Forge blocks inherit from
   top-level defaults and override only deltas
-  ([ADR 0045](ADRs/0045-forge-portable-harness-schema.md)).
+  ([ADR 0045](ADRs/0045-forge-portable-harness-schema.md)). `forge:` is
+  deprecated in favor of CEL-guarded `overlays:` — see
+  [ADR 0088](ADRs/0088-cel-guarded-overlays.md).
 - Unified env var delivery: a single `env:` key with `runner` and `sandbox`
   sub-maps replaces `runner_env` and manual `.env` files. The runner generates
   the sandbox `.env` file from `env.sandbox` at bootstrap. `runner_env` is
