@@ -76,6 +76,7 @@ type LabelChange struct {
 
 // Comment describes a comment_added transition.
 type Comment struct {
+	ID          int    `json:"id,omitempty"`
 	Command     string `json:"command,omitempty"`
 	Body        string `json:"body"`
 	Instruction string `json:"instruction,omitempty"`

@@ -1189,9 +1189,9 @@ func TestFakeClient_ReactionErrorInjection(t *testing.T) {
 func TestFakeClient_AddIssueCommentReaction(t *testing.T) {
 	fc := NewFakeClient()
 
-	id1, err := fc.AddIssueCommentReaction(context.Background(), "org", "repo", 555, "eyes")
+	id1, err := fc.AddIssueCommentReaction(context.Background(), "org", "repo", 7, 555, "eyes")
 	require.NoError(t, err)
-	id2, err := fc.AddIssueCommentReaction(context.Background(), "org", "repo", 555, "+1")
+	id2, err := fc.AddIssueCommentReaction(context.Background(), "org", "repo", 7, 555, "+1")
 	require.NoError(t, err)
 
 	assert.NotZero(t, id1)
@@ -1203,10 +1203,10 @@ func TestFakeClient_AddIssueCommentReaction(t *testing.T) {
 
 func TestFakeClient_DeleteIssueCommentReaction(t *testing.T) {
 	fc := NewFakeClient()
-	id, err := fc.AddIssueCommentReaction(context.Background(), "org", "repo", 555, "eyes")
+	id, err := fc.AddIssueCommentReaction(context.Background(), "org", "repo", 7, 555, "eyes")
 	require.NoError(t, err)
 
-	require.NoError(t, fc.DeleteIssueCommentReaction(context.Background(), "org", "repo", 555, id))
+	require.NoError(t, fc.DeleteIssueCommentReaction(context.Background(), "org", "repo", 7, 555, id))
 	assert.Equal(t, []int64{id}, fc.DeletedCommentReactions)
 }
 
@@ -1214,7 +1214,7 @@ func TestFakeClient_CommentReactionErrorInjection(t *testing.T) {
 	fc := NewFakeClient()
 	fc.Errors = map[string]error{"AddIssueCommentReaction": errors.New("boom")}
 
-	_, err := fc.AddIssueCommentReaction(context.Background(), "org", "repo", 555, "eyes")
+	_, err := fc.AddIssueCommentReaction(context.Background(), "org", "repo", 7, 555, "eyes")
 	assert.Error(t, err)
 }
 

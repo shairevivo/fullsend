@@ -1463,7 +1463,7 @@ func (f *FakeClient) DeleteIssueReaction(_ context.Context, _, _ string, _ int, 
 	return nil
 }
 
-func (f *FakeClient) AddIssueCommentReaction(_ context.Context, owner, repo string, commentID int, content string) (int64, error) {
+func (f *FakeClient) AddIssueCommentReaction(_ context.Context, owner, repo string, number, commentID int, content string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if e := f.err("AddIssueCommentReaction"); e != nil {
@@ -1479,7 +1479,7 @@ func (f *FakeClient) AddIssueCommentReaction(_ context.Context, owner, repo stri
 	return f.reactionCounter, nil
 }
 
-func (f *FakeClient) DeleteIssueCommentReaction(_ context.Context, _, _ string, _ int, reactionID int64) error {
+func (f *FakeClient) DeleteIssueCommentReaction(_ context.Context, _, _ string, _, _ int, reactionID int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if e := f.err("DeleteIssueCommentReaction"); e != nil {
@@ -1503,6 +1503,7 @@ func (f *FakeClient) ListIssueReactions(_ context.Context, owner, repo string, n
 	for _, r := range f.AddedReactions {
 		if r.Owner == owner && r.Repo == repo && r.Number == number && !deleted[r.ID] {
 			reactions = append(reactions, Reaction{
+				ID:      r.ID,
 				Content: r.Content,
 				User:    f.AuthenticatedUser,
 			})
