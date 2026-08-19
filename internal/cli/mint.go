@@ -413,6 +413,11 @@ func newMintDeployCmd() *cobra.Command {
 	var rolesFlag string
 	var public bool
 
+	// Status auth flags (shared between platforms).
+	var statusAuth string
+	var statusGitHubGroup string
+	var statusGitHubClientID string
+
 	// Cloudflare-specific flags.
 	var workerName string
 	var preview string
@@ -547,7 +552,7 @@ Cloudflare mode (--platform=cloudflare):
 
 			switch platform {
 			case "gcp":
-				return runMintDeployGCP(cmd.Context(), project, region, sourceDir, skipDeploy, dryRun, pemDir, appSet, roles, public)
+				return runMintDeployGCP(cmd.Context(), project, region, sourceDir, skipDeploy, dryRun, pemDir, appSet, roles, public, statusGitHubGroup, statusGitHubClientID)
 			case "cloudflare":
 				// Reject conflicting flags: --public widens auth to all repos,
 				// so combining it with an explicit --per-repo-wif-repos list
@@ -555,7 +560,7 @@ Cloudflare mode (--platform=cloudflare):
 				if public && cmd.Flags().Changed("per-repo-wif-repos") {
 					return fmt.Errorf("--public and --per-repo-wif-repos are mutually exclusive; use one or the other")
 				}
-				return runMintDeployCloudflare(cmd.Context(), workerName, sourceDir, preview, dryRun, pemDir, appSet, roles, allowedOrgs, perRepoWIFRepos, workflowHostRepos, allowedWorkflowFiles, public, customDomain, cmd.Flags().Changed("allowed-orgs"), cmd.Flags().Changed("per-repo-wif-repos"), cmd.Flags().Changed("workflow-host-repos"), cmd.Flags().Changed("allowed-workflow-files"))
+				return runMintDeployCloudflare(cmd.Context(), workerName, sourceDir, preview, dryRun, pemDir, appSet, roles, allowedOrgs, perRepoWIFRepos, workflowHostRepos, allowedWorkflowFiles, public, customDomain, statusGitHubGroup, statusGitHubClientID, cmd.Flags().Changed("allowed-orgs"), cmd.Flags().Changed("per-repo-wif-repos"), cmd.Flags().Changed("workflow-host-repos"), cmd.Flags().Changed("allowed-workflow-files"))
 			default:
 				return fmt.Errorf("unsupported platform %q: must be \"gcp\" or \"cloudflare\"", platform)
 			}
@@ -573,6 +578,15 @@ Overrides the default set (fullsend,triage,coder,review,retro,prioritize).
 Example: --roles=fullsend,triage,coder,review,retro,prioritize,e2e`)
 	cmd.Flags().BoolVar(&public, "public", false, `deploy public mint (GCP: ALLOWED_ORGS=*; Cloudflare: PER_REPO_WIF_REPOS=*)
 Mutually exclusive with --per-repo-wif-repos on Cloudflare`)
+
+	// Status auth flags.
+	cmd.Flags().StringVar(&statusAuth, "status-auth", "oidc", `comma-separated status auth modes (default: oidc)
+Each non-oidc mode selects a Go build tag. Modes: oidc, github.
+oidc is always compiled in; github requires --status-github-group
+and --status-github-client-id.`)
+	cmd.Flags().StringVar(&statusGitHubGroup, "status-github-group", "", `ORG/TEAM slug for GitHub status auth (required when github mode enabled)
+Example: --status-github-group=acme/platform-team`)
+	cmd.Flags().StringVar(&statusGitHubClientID, "status-github-client-id", "", `GitHub OAuth App client ID for status auth (required when github mode enabled)`)
 
 	// GCP-specific flags.
 	cmd.Flags().StringVar(&project, "project", "", "GCP project ID (required for --platform=gcp)")
@@ -634,7 +648,7 @@ func warnIrrelevantFlags(cmd *cobra.Command, platform string) {
 	}
 }
 
-func runMintDeployGCP(ctx context.Context, project, region, sourceDir string, skipDeploy, dryRun bool, pemDir, appSet string, roles []string, public bool) error {
+func runMintDeployGCP(ctx context.Context, project, region, sourceDir string, skipDeploy, dryRun bool, pemDir, appSet string, roles []string, public bool, statusGitHubGroup, statusGitHubClientID string) error {
 	if appSet == "" {
 		appSet = appsetup.DefaultAppSet
 	}
@@ -699,13 +713,15 @@ func runMintDeployGCP(ctx context.Context, project, region, sourceDir string, sk
 	}
 
 	cfg := gcf.Config{
-		ProjectID:         project,
-		Region:            region,
-		FunctionSourceDir: sourceDir,
-		DeployMode:        deployMode,
-		Version:           version,
-		Commit:            deployCommit,
-		PublicMint:        public,
+		ProjectID:            project,
+		Region:               region,
+		FunctionSourceDir:    sourceDir,
+		DeployMode:           deployMode,
+		Version:              version,
+		Commit:               deployCommit,
+		PublicMint:           public,
+		StatusGitHubGroup:    statusGitHubGroup,
+		StatusGitHubClientID: statusGitHubClientID,
 	}
 
 	if pemDir != "" {
@@ -760,7 +776,7 @@ func runMintDeployGCP(ctx context.Context, project, region, sourceDir string, sk
 	return nil
 }
 
-func runMintDeployCloudflare(ctx context.Context, workerName, sourceDir, previewAlias string, dryRun bool, pemDir, appSet string, roles []string, allowedOrgs, perRepoWIFRepos, workflowHostRepos, allowedWorkflowFiles string, public bool, customDomain string, allowedOrgsExplicit, perRepoWIFReposExplicit, workflowHostReposExplicit, allowedWorkflowFilesExplicit bool) error {
+func runMintDeployCloudflare(ctx context.Context, workerName, sourceDir, previewAlias string, dryRun bool, pemDir, appSet string, roles []string, allowedOrgs, perRepoWIFRepos, workflowHostRepos, allowedWorkflowFiles string, public bool, customDomain, statusGitHubGroup, statusGitHubClientID string, allowedOrgsExplicit, perRepoWIFReposExplicit, workflowHostReposExplicit, allowedWorkflowFilesExplicit bool) error {
 	if appSet == "" {
 		appSet = appsetup.DefaultAppSet
 	}
@@ -974,17 +990,19 @@ func runMintDeployCloudflare(ctx context.Context, workerName, sourceDir, preview
 	}
 
 	cfg := cf.Config{
-		AccountID:    accountID,
-		WorkerName:   workerName,
-		DeployMode:   deployMode,
-		PreviewAlias: previewAlias,
-		SourceDir:    sourceDir,
-		EnvVars:      cfEnvVars,
-		Secrets:      cfSecrets,
-		Version:      version,
-		Commit:       deployCommit,
-		ZoneID:       resolvedZoneID,
-		CustomDomain: customDomain,
+		AccountID:            accountID,
+		WorkerName:           workerName,
+		DeployMode:           deployMode,
+		PreviewAlias:         previewAlias,
+		SourceDir:            sourceDir,
+		EnvVars:              cfEnvVars,
+		Secrets:              cfSecrets,
+		Version:              version,
+		Commit:               deployCommit,
+		ZoneID:               resolvedZoneID,
+		CustomDomain:         customDomain,
+		StatusGitHubGroup:    statusGitHubGroup,
+		StatusGitHubClientID: statusGitHubClientID,
 	}
 
 	wrangler := mintCFWranglerFactory(accountID)

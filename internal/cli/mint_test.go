@@ -221,7 +221,7 @@ func TestRunMintDeployGCP_SkipDeployReportsCommitResolution(t *testing.T) {
 	require.NoError(t, err)
 	oldStdout := os.Stdout
 	os.Stdout = w
-	deployErr := runMintDeployGCP(context.Background(), "my-project-id", "us-central1", t.TempDir(), true, false, "", "", nil, false)
+	deployErr := runMintDeployGCP(context.Background(), "my-project-id", "us-central1", t.TempDir(), true, false, "", "", nil, false, "", "")
 	require.NoError(t, w.Close())
 	os.Stdout = oldStdout
 	require.NoError(t, deployErr)
@@ -614,7 +614,7 @@ func withFakeWASMBuild(t *testing.T) {
 	t.Helper()
 	origBuild := cf.BuildWASMFn
 	origCopy := cf.CopyWASMExecFn
-	cf.BuildWASMFn = func(outPath, _, _ string) error {
+	cf.BuildWASMFn = func(outPath, _, _, _, _ string) error {
 		return os.WriteFile(outPath, []byte("fake-wasm"), 0o644)
 	}
 	cf.CopyWASMExecFn = func(destPath string) error {

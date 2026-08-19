@@ -44,7 +44,7 @@ const (
 // ErrFunctionNotFound is returned when the mint function does not exist.
 var ErrFunctionNotFound = errors.New("mint function not found")
 
-//go:embed mintsrc/go.mod.embed mintsrc/go.sum.embed mintsrc/main.go.embed mintsrc/mintcore/go.mod.embed mintsrc/mintcore/go.sum.embed mintsrc/mintcore/claims.go.embed mintsrc/mintcore/config.go.embed mintsrc/mintcore/env.go.embed mintsrc/mintcore/foreign.go.embed mintsrc/mintcore/gcp_pem.go.embed mintsrc/mintcore/github.go.embed mintsrc/mintcore/handler.go.embed mintsrc/mintcore/http_client.go.embed mintsrc/mintcore/interfaces.go.embed mintsrc/mintcore/jwks_verifier.go.embed mintsrc/mintcore/mintconsts/mintconsts.go.embed mintsrc/mintcore/patterns.go.embed mintsrc/mintcore/repos_scope.go.embed mintsrc/mintcore/sts_verifier.go.embed mintsrc/mintcore/version.go.embed mintsrc/mintcore/wif.go.embed
+//go:embed mintsrc/go.mod.embed mintsrc/go.sum.embed mintsrc/main.go.embed mintsrc/mintcore/go.mod.embed mintsrc/mintcore/go.sum.embed mintsrc/mintcore/claims.go.embed mintsrc/mintcore/config.go.embed mintsrc/mintcore/env.go.embed mintsrc/mintcore/foreign.go.embed mintsrc/mintcore/gcp_pem.go.embed mintsrc/mintcore/github.go.embed mintsrc/mintcore/handler.go.embed mintsrc/mintcore/http_client.go.embed mintsrc/mintcore/interfaces.go.embed mintsrc/mintcore/jwks_verifier.go.embed mintsrc/mintcore/mintconsts/mintconsts.go.embed mintsrc/mintcore/patterns.go.embed mintsrc/mintcore/repos_scope.go.embed mintsrc/mintcore/status_auth.go.embed mintsrc/mintcore/status_consts.go.embed mintsrc/mintcore/status_github_stub.go.embed mintsrc/mintcore/sts_verifier.go.embed mintsrc/mintcore/version.go.embed mintsrc/mintcore/wif.go.embed
 var embeddedMintSource embed.FS
 
 // embeddedMintFiles maps embedded filenames (.embed suffix avoids
@@ -69,6 +69,9 @@ var embeddedMintFiles = map[string]string{
 	"mintcore/mintconsts/mintconsts.go.embed": "mintcore/mintconsts/mintconsts.go",
 	"mintcore/patterns.go.embed":              "mintcore/patterns.go",
 	"mintcore/repos_scope.go.embed":           "mintcore/repos_scope.go",
+	"mintcore/status_auth.go.embed":           "mintcore/status_auth.go",
+	"mintcore/status_consts.go.embed":         "mintcore/status_consts.go",
+	"mintcore/status_github_stub.go.embed":    "mintcore/status_github_stub.go",
 	"mintcore/sts_verifier.go.embed":          "mintcore/sts_verifier.go",
 	"mintcore/version.go.embed":               "mintcore/version.go",
 	"mintcore/wif.go.embed":                   "mintcore/wif.go",
@@ -138,6 +141,14 @@ type Config struct {
 	Commit string
 	// PublicMint bootstraps ALLOWED_ORGS=* and a permissive WIF provider CEL.
 	PublicMint bool
+
+	// StatusGitHubGroup is the ORG/TEAM slug for the GitHub status
+	// validator. Stamped into the source at bundle time alongside
+	// Version and Commit. Empty when the github build tag is not active.
+	StatusGitHubGroup string
+	// StatusGitHubClientID is the GitHub OAuth App client ID for the
+	// status validator. Stamped at bundle time. Empty when unused.
+	StatusGitHubClientID string
 }
 
 // Provisioner creates GCP infrastructure for OIDC-based token minting.
@@ -823,7 +834,7 @@ func (p *Provisioner) provisionSelfManaged(ctx context.Context) (map[string]stri
 			case p.cfg.FunctionSourceDir == "":
 				needsDeploy = false
 			default: // DeployAuto
-				earlySourceZip, err = bundleFunctionSource(p.cfg.FunctionSourceDir, p.cfg.Version, p.cfg.Commit)
+				earlySourceZip, err = bundleFunctionSource(p.cfg.FunctionSourceDir, p.cfg.Version, p.cfg.Commit, p.cfg.StatusGitHubGroup, p.cfg.StatusGitHubClientID)
 				if err != nil {
 					return nil, fmt.Errorf("validating function source: %w", err)
 				}
@@ -842,7 +853,7 @@ func (p *Provisioner) provisionSelfManaged(ctx context.Context) (map[string]stri
 
 	// Code deployment path — bundle source.
 	if earlySourceZip == nil {
-		earlySourceZip, err = bundleFunctionSource(p.cfg.FunctionSourceDir, p.cfg.Version, p.cfg.Commit)
+		earlySourceZip, err = bundleFunctionSource(p.cfg.FunctionSourceDir, p.cfg.Version, p.cfg.Commit, p.cfg.StatusGitHubGroup, p.cfg.StatusGitHubClientID)
 		if err != nil {
 			return nil, fmt.Errorf("validating function source: %w", err)
 		}
@@ -1874,15 +1885,15 @@ func sortedByteMapKeys(m map[string][]byte) []string {
 // Version and commit are stamped directly into the source by generating a
 // mintcore/version.go file in the zip, so the deployed code carries its own
 // version identity without relying on environment variables.
-func bundleFunctionSource(dir, version, commit string) ([]byte, error) {
+func bundleFunctionSource(dir, version, commit, statusGitHubGroup, statusGitHubClientID string) ([]byte, error) {
 	if dir == "" {
-		return bundleEmbeddedMintSource(version, commit)
+		return bundleEmbeddedMintSource(version, commit, statusGitHubGroup, statusGitHubClientID)
 	}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return bundleEmbeddedMintSource(version, commit)
+			return bundleEmbeddedMintSource(version, commit, statusGitHubGroup, statusGitHubClientID)
 		}
 		return nil, fmt.Errorf("reading function source dir: %w", err)
 	}
@@ -1933,9 +1944,9 @@ func bundleFunctionSource(dir, version, commit string) ([]byte, error) {
 
 	// Include the mintcore module as a subdirectory (sibling on disk,
 	// nested in the zip so the replace ./mintcore directive resolves).
-	// Skip version.go — it's generated below with stamped values.
+	// Skip version.go and status_consts.go — generated below with stamped values.
 	mintcoreDir := filepath.Join(dir, "..", "mintcore")
-	skip := map[string]bool{"version.go": true}
+	skip := map[string]bool{"version.go": true, "status_consts.go": true}
 	if err := addDirToZip(w, mintcoreDir, "mintcore", skip); err != nil {
 		return nil, fmt.Errorf("bundling mintcore: %w", err)
 	}
@@ -1943,6 +1954,11 @@ func bundleFunctionSource(dir, version, commit string) ([]byte, error) {
 	// Stamp version info directly into the source.
 	if err := writeVersionGoToZip(w, "mintcore/version.go", version, commit); err != nil {
 		return nil, fmt.Errorf("writing version.go: %w", err)
+	}
+
+	// Stamp status auth consts into the source.
+	if err := writeStatusConstsGoToZip(w, "mintcore/status_consts.go", statusGitHubGroup, statusGitHubClientID); err != nil {
+		return nil, fmt.Errorf("writing status_consts.go: %w", err)
 	}
 
 	if fileCount == 0 {
@@ -2021,7 +2037,7 @@ func addDirToZipRooted(w *zip.Writer, absRoot, srcDir, zipPrefix string, skip ma
 // toolchain from treating the directory as a module root, and are renamed
 // to their real names in the zip. The version.go entry is replaced with
 // generated content that stamps the provided version and commit.
-func bundleEmbeddedMintSource(version, commit string) ([]byte, error) {
+func bundleEmbeddedMintSource(version, commit, statusGitHubGroup, statusGitHubClientID string) ([]byte, error) {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
 
@@ -2033,8 +2049,9 @@ func bundleEmbeddedMintSource(version, commit string) ([]byte, error) {
 
 	for _, embeddedName := range keys {
 		realName := embeddedMintFiles[embeddedName]
-		// Skip version.go — it's generated below with stamped values.
-		if realName == "mintcore/version.go" {
+		// Skip generated files — version.go and status_consts.go are
+		// generated below with stamped values.
+		if realName == "mintcore/version.go" || realName == "mintcore/status_consts.go" {
 			continue
 		}
 		data, err := embeddedMintSource.ReadFile("mintsrc/" + embeddedName)
@@ -2055,6 +2072,11 @@ func bundleEmbeddedMintSource(version, commit string) ([]byte, error) {
 		return nil, fmt.Errorf("writing version.go: %w", err)
 	}
 
+	// Stamp status auth consts into the source.
+	if err := writeStatusConstsGoToZip(w, "mintcore/status_consts.go", statusGitHubGroup, statusGitHubClientID); err != nil {
+		return nil, fmt.Errorf("writing status_consts.go: %w", err)
+	}
+
 	if err := w.Close(); err != nil {
 		return nil, fmt.Errorf("closing zip: %w", err)
 	}
@@ -2067,6 +2089,18 @@ func bundleEmbeddedMintSource(version, commit string) ([]byte, error) {
 // the running binary.
 func writeVersionGoToZip(w *zip.Writer, path, version, commit string) error {
 	src := fmt.Sprintf("package mintcore\n\nvar (\n\tVersion = %q\n\tCommit  = %q\n)\n", version, commit)
+	f, err := w.Create(path)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write([]byte(src))
+	return err
+}
+
+// writeStatusConstsGoToZip writes a generated status_consts.go into the
+// zip archive with the provided status auth configuration values.
+func writeStatusConstsGoToZip(w *zip.Writer, path, githubGroup, githubClientID string) error {
+	src := fmt.Sprintf("package mintcore\n\nvar (\n\tStatusGitHubGroup    = %q\n\tStatusGitHubClientID = %q\n)\n", githubGroup, githubClientID)
 	f, err := w.Create(path)
 	if err != nil {
 		return err
